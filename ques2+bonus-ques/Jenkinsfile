@@ -1,0 +1,98 @@
+pipeline {
+    agent any
+    stages {
+        stage('cancel previous build if any') {
+            steps {
+                cancelPreviousBuilds()
+            }
+        }
+
+        stage('Deploy Backend Metascrape') {
+            steps {
+                script{ 
+                    deployApplicationToFargate("backend-metascrape")
+                    sleep(120)
+
+                    print("waiting unitl service is up")
+                    checkFargateApplicationRunning()
+                }
+            }
+        }
+    }
+
+    post {
+        success {
+            echo "BUILD SUCCESS"
+            echo "Keep Current Build If branch is master"
+        }
+        failure {
+            echo "BUILD FAILURE"
+        }
+    }
+}
+
+def getShortCommitHash() {
+    return sh(returnStdout: true, script: "git log -n 1 --pretty=format:'%h'").trim()
+}
+
+def cancelPreviousBuilds() {
+    def hudson = Hudson.instance
+    def pname = env.JOB_NAME.split('/')[0]
+    def jobName = env.JOB_NAME
+    def buildNumber = env.BUILD_NUMBER.toInteger()
+    def currentJob = Jenkins.instance.getItemByFullName(jobName)
+
+    for (def build : currentJob.builds) {
+        if (build.isBuilding() && build.number.toInteger() != buildNumber && build.number.toInteger() < buildNumber) {
+            build.doStop()
+        }
+    }
+}
+
+def deployApplicationToFargate(String app_name) {
+     sh 'aws ecr get-login-password --region ap-south-1 | docker login --username AWS --password-stdin $AWS_ID.dkr.ecr.ap-south-1.amazonaws.com'
+     sh 'docker build --tag $AWS_ID.dkr.ecr.ap-south-1.amazonaws.com/backend/metascrape:latest --build-arg APP_VERSION=$BUILD_TIMESTAMP --build-arg SERVER=$SERVER --file "Dockerfile" .'
+     sh 'docker push $AWS_ID.dkr.ecr.ap-south-1.amazonaws.com/backend/metascrape:latest'
+     sh 'aws ecs update-service ' + '\
+         --cluster ' + app_name + '-cluster\
+         --service ' + app_name + '-service\
+         --force-new-deployment\
+         --health-check-grace-period-seconds 120'
+}
+
+def checkFargateApplicationRunning(String app_name, String protocol, String server_dns_name, String port) {
+    try {
+        timeout(time: 5, unit: 'MINUTES') {
+            waitUntil {
+               script {
+                 def jar_name = sh(script: 'ls ' + app_name + '/target/ | grep .jar$', returnStdout: true)
+                 echo "JAR_NAME = ${jar_name}"
+                 def response = sh(script: 'curl ' + protocol + "://" + server_dns_name + ':' + port + '/info | python -c \'import json,sys;obj=json.load(sys.stdin);print obj["app"]["version"]\'', returnStdout: true)
+                 echo "RESPONSE = ${response}"
+                 return (jar_name == response);
+               }
+            }
+        }
+    } catch (org.jenkinsci.plugins.workflow.steps.FlowInterruptedException e) {
+        error("Service took too long to start");
+    }
+}
+
+def checkFargateApplicationRunning() {
+    try {
+        timeout(time: 5, unit: 'MINUTES') {
+            waitUntil {
+               script {
+                 def app_version = sh(returnStdout: true, script: 'echo $BUILD_TIMESTAMP').trim()
+                 echo "APP_VERSION = ${app_version}"
+                 def response = sh(script: 'curl http://' + '$PRIVATE_LB_DNS' + ':8081/info | python3 -c \'import json,sys;obj=json.load(sys.stdin);print(obj["payload"]["app"])\'', returnStdout: true).trim()
+                 echo "RESPONSE = ${response}"
+                 return (app_version == response);
+               }
+            }
+        }
+    } catch (org.jenkinsci.plugins.workflow.steps.FlowInterruptedException e) {
+        error("Service took too long to start");
+    }
+}
+

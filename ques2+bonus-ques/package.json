@@ -1,0 +1,27 @@
+{
+  "name": "metascrape-service",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start": "node index.js",
+    "dev": "nodemon index.js",
+    "build-image": "docker build -t node-metascraper .",
+    "container": "docker run -d -p 3000:80 node-metascraper"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@sentry/node": "^6.19.5",
+    "axios": "^0.26.1",
+    "dotenv": "^16.0.0",
+    "express": "^4.17.3",
+    "moment": "^2.29.3",
+    "morgan": "^1.10.0"
+  },
+  "devDependencies": {
+    "nodemon": "^2.0.15"
+  },
+  "description": ""
+}
